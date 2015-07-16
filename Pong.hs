@@ -1,0 +1,144 @@
+{-
+Name: <James Park>
+Collaborators: <"none">
+Notes: <"
+  In order to move the user paddle, you have to distinctly press the up and down keys (so holding it down
+  does not continuously move the paddle).
+
+  Most of the structure of this code is based off the Tetris.hs given. Specifically I re-used
+  the renderState function for displaying text, since there wasn't a need to change it for pong.
+
+  This game supports restart. 
+
+">
+-}
+import Graphics.Gloss.Interface.Pure.Game
+import Constants
+import Piece
+import Data.Monoid
+
+data State = NotStarted | Playing | Ended
+
+data World = World { w_field :: Field
+                   , w_userPiece :: Piece
+                   , w_compPiece :: Piece
+                   , w_ball :: Ball
+                   , w_state :: State
+                   }
+
+
+initialWorld :: IO World
+initialWorld = do
+  return $ World { w_field      = blankField
+                 , w_userPiece      = initial_left_piece
+                 , w_compPiece = initial_right_piece
+                 , w_ball = first_ball
+                 , w_state      = NotStarted
+                 }
+
+step :: Float -> World -> World
+step elapsed w@(World { w_field      = field
+                 , w_userPiece      = left_piece
+                 , w_compPiece = right_piece
+                 , w_ball = ball
+                 , w_state      = Playing })
+
+  | stillPlaying ball left_piece right_piece
+  = w{w_compPiece = tryMoveComp right_piece (tryMoveBall ball left_piece right_piece), w_ball = tryMoveBall ball left_piece right_piece}
+  | otherwise
+  = w{w_ball = tryMoveBall ball left_piece right_piece, w_state = Ended}
+                    
+step _ w = w 
+
+react :: Event -> World -> World
+react ev w@(World{ w_field = field
+                  , w_userPiece = leftPiece
+                  , w_state = Playing})
+  = case ev of
+      EventKey (SpecialKey KeyUp) Down _ _ ->
+           w{w_userPiece = tryMoveUser leftPiece 10}
+      EventKey (SpecialKey KeyDown) Down _ _ ->
+           w{w_userPiece = tryMoveUser leftPiece (-1 *10)}
+      _ -> w
+
+react (EventKey (SpecialKey KeySpace) Down _ _)
+      w
+  = w {w_field = blankField
+      , w_userPiece = initial_left_piece
+      , w_compPiece = initial_right_piece
+      , w_ball = first_ball
+      , w_state = Playing}
+
+react _ w = w
+
+stillPlaying :: Ball -> Piece -> Piece -> Bool
+stillPlaying (b@Ball{ball_loc = (x,y), vel_x = vx, vel_y = vy})
+            (userpiece@Piece{piece_loc = (p1, p2)}) (compPiece@Piece{piece_loc = (c1, c2)})
+     = (y + vy + ballRadiusInt <= fieldHeightInt && ((y + vy) - ballRadiusInt) >= 0 
+     && (x + vx - ballRadiusInt) >= 10 && (x + vx + ballRadiusInt) <= c1) ||
+     ((not(y + vy + ballRadiusInt <= fieldHeightInt) || not(((y + vy) - ballRadiusInt) >= 0))
+     && (x + vx - ballRadiusInt) >= 10 && (x + vx + ballRadiusInt) <= c1) || 
+    (y + vy + ballRadiusInt <= fieldHeightInt && ((y + vy) - ballRadiusInt) >= 0) && (((y + vy <= p2 + 50) 
+      && (y + vy + ballRadiusInt >= p2) && (x + vx - ballRadiusInt < 10))
+      || ((y + vy <= c2 + 50) && (y + vy + ballRadiusInt >= c2) && (x + vx + ballRadiusInt > c1)))
+
+tryMoveBall :: Ball -> Piece -> Piece -> Ball
+tryMoveBall (b@Ball{ball_loc = (x,y), vel_x = vx, vel_y = vy})
+            (userpiece@Piece{piece_loc = (p1, p2)}) (compPiece@Piece{piece_loc = (c1, c2)})
+   | y + vy + ballRadiusInt <= fieldHeightInt && ((y + vy) - ballRadiusInt) >= 0 
+     && (x + vx - ballRadiusInt) >= 10 && (x + vx + ballRadiusInt) <= c1
+   = b{ball_loc = (x + vx, y + vy)}
+   | (not(y + vy + ballRadiusInt <= fieldHeightInt) || not(((y + vy) - ballRadiusInt) >= 0))
+     && (x + vx - ballRadiusInt) >= 10 && (x + vx + ballRadiusInt) <= c1
+   = b{ball_loc = (x + vx, y), vel_y = -1 * vy}
+   | (y + vy + ballRadiusInt <= fieldHeightInt && ((y + vy) - ballRadiusInt) >= 0) && (((y + vy <= p2 + 50) && 
+    (y + vy + ballRadiusInt >= p2) && (x + vx - ballRadiusInt < 10))
+     || ((y + vy <= c2 + 50) && (y + vy + ballRadiusInt >= c2) && (x + vx + ballRadiusInt > c1)))
+   = b{ball_loc = (x, y + vy), vel_x = -1 * vx}
+   | otherwise
+   = b{ball_loc = (x + vx - ballRadiusInt, y + vy)} -- since the user is guaranteed to lose, i want to show the ball hitting the left wall.
+
+tryMoveUser :: Piece -> Int -> Piece
+tryMoveUser p@Piece{piece_loc = (x,y)} fy
+   | y + fy + 50 <= fieldHeightInt && y + fy >= 0 
+   =  p{piece_loc = (x, y + fy)}
+   | otherwise
+   = p
+
+tryMoveComp :: Piece -> Ball -> Piece
+tryMoveComp p@Piece{piece_loc = (x,y)} b@Ball{ball_loc = (bx, by), vel_y = vy}
+   | (by - ballRadiusInt + 25) <= fieldHeightInt && (by - ballRadiusInt - 25) >= 0
+   =  p{piece_loc = (x, (by - ballRadiusInt - 25))}
+   | otherwise
+   = p
+
+render :: World -> Picture
+render (World { w_field      = field
+              , w_userPiece      = piece
+              , w_compPiece = next_piece
+              , w_ball = ball
+              , w_state      = state })
+  = translate (-windowWidthF / 2) (-windowHeightF / 2) $
+
+    (translate 100 100 $
+      renderField field <> renderRectangle piece <> renderRectangle next_piece <> 
+      renderCircle ball) <>
+
+    (color blue $
+     translate (border + fieldWidth + border) border $
+     scale 0.2 0.2 $
+     renderState state)
+
+renderState :: State -> Picture
+renderState NotStarted = (translate 0 120 $ text "Spacebar to") <>
+                         text "start"
+renderState Playing    = blank
+renderState Ended      = (translate 0 120 $ text "Spacebar to") <>
+                         text "play again"
+
+
+main :: IO ()
+main = do
+  world <- initialWorld
+  play (InWindow "Pong" (windowWidth, windowHeight) (windowX, windowY))
+    fieldBackground 30 world render react step
